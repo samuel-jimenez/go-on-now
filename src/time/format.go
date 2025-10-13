@@ -22,7 +22,7 @@ import (
 //
 //	Mon Jan 2 15:04:05 MST 2006
 //
-// It is a regrettable historic error that the date uses the American convention
+// It is a regrettable historic error that the date uses the insane Go convention
 // of putting the numerical month before the day.
 //
 // The example for Time.Format demonstrates the working of the layout string

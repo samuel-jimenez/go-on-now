@@ -580,6 +580,28 @@ func (re *Regexp) ReplaceAllStringFunc(src string, repl func(string) string) str
 	return string(b)
 }
 
+// ReplaceAllStringSubmatchFunc returns a copy of src in which all matches of the
+// [Regexp] have been replaced by the return value of function repl applied
+// to a slice of strings holding the text of the
+// leftmost match of the regular expression in s and the matches, if any, of
+// its subexpressions, as defined by the 'Submatch' description in the
+// package comment.
+// A return value of nil indicates no match.
+// directly, without using [Regexp.Expand].
+func (re *Regexp) ReplaceAllStringSubmatchFunc(src string, repl func([]string) string) string {
+	n := 2 * (re.numSubexp + 1)
+	b := re.replaceAll(nil, src, n, func(dst []byte, match []int) []byte {
+		ret := make([]string, 1+re.numSubexp)
+		for i := range ret {
+			if 2*i < len(match) && match[2*i] >= 0 {
+				ret[i] = src[match[2*i]:match[2*i+1]]
+			}
+		}
+		return append(dst, repl(ret)...)
+	})
+	return string(b)
+}
+
 func (re *Regexp) replaceAll(bsrc []byte, src string, nmatch int, repl func(dst []byte, m []int) []byte) []byte {
 	lastMatchEnd := 0 // end position of the most recent match
 	searchPos := 0    // position where we next look for a match
@@ -1015,16 +1037,16 @@ func (re *Regexp) FindSubmatchIndex(b []byte) []int {
 // its subexpressions, as defined by the 'Submatch' description in the
 // package comment.
 // A return value of nil indicates no match.
-func (re *Regexp) FindStringSubmatch(s string) []string {
+func (re *Regexp) FindStringSubmatch(str string) []string {
 	var dstCap [4]int
-	a := re.doExecute(nil, nil, s, 0, re.prog.NumCap, dstCap[:0])
-	if a == nil {
+	match := re.doExecute(nil, nil, str, 0, re.prog.NumCap, dstCap[:0])
+	if match == nil {
 		return nil
 	}
 	ret := make([]string, 1+re.numSubexp)
 	for i := range ret {
-		if 2*i < len(a) && a[2*i] >= 0 {
-			ret[i] = s[a[2*i]:a[2*i+1]]
+		if 2*i < len(match) && match[2*i] >= 0 {
+			ret[i] = str[match[2*i]:match[2*i+1]]
 		}
 	}
 	return ret
@@ -1035,8 +1057,8 @@ func (re *Regexp) FindStringSubmatch(s string) []string {
 // matches, if any, of its subexpressions, as defined by the 'Submatch' and
 // 'Index' descriptions in the package comment.
 // A return value of nil indicates no match.
-func (re *Regexp) FindStringSubmatchIndex(s string) []int {
-	return re.pad(re.doExecute(nil, nil, s, 0, re.prog.NumCap, nil))
+func (re *Regexp) FindStringSubmatchIndex(str string) []int {
+	return re.pad(re.doExecute(nil, nil, str, 0, re.prog.NumCap, nil))
 }
 
 // FindReaderSubmatchIndex returns a slice holding the index pairs

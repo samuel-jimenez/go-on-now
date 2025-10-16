@@ -326,10 +326,10 @@ type BadPathEmbeddedB struct {
 var badPathTests = []struct {
 	v, e any
 }{
-	{&BadPathTestA{}, &TagPathError{reflect.TypeFor[BadPathTestA](), "First", "items>item1", "Second", "items"}},
-	{&BadPathTestB{}, &TagPathError{reflect.TypeFor[BadPathTestB](), "First", "items>item1", "Second", "items>item1>value"}},
-	{&BadPathTestC{}, &TagPathError{reflect.TypeFor[BadPathTestC](), "First", "", "Second", "First"}},
-	{&BadPathTestD{}, &TagPathError{reflect.TypeFor[BadPathTestD](), "First", "", "Second", "First"}},
+	{&BadPathTestA{}, &TagPathError{reflect.TypeOf(BadPathTestA{}), "First", "items>item1", "Second", "items"}},
+	{&BadPathTestB{}, &TagPathError{reflect.TypeOf(BadPathTestB{}), "First", "items>item1", "Second", "items>item1>value"}},
+	{&BadPathTestC{}, &TagPathError{reflect.TypeOf(BadPathTestC{}), "First", "", "Second", "First"}},
+	{&BadPathTestD{}, &TagPathError{reflect.TypeOf(BadPathTestD{}), "First", "", "Second", "First"}},
 }
 
 func TestUnmarshalBadPaths(t *testing.T) {
@@ -538,14 +538,14 @@ var tableAttrs = []struct {
 		tab: TableAttrs{TAttr{HTable: "hello", FTable: "world"}},
 	},
 	{
-		// Default space does not apply to attribute names.
+		// Default namespace does not apply to attribute names.
 		xml: `<TableAttrs xmlns="http://www.w3schools.com/furniture" xmlns:h="http://www.w3.org/TR/html4/"><TAttr ` +
 			`h:table="hello" table="world" ` +
 			`/></TableAttrs>`,
 		tab: TableAttrs{TAttr{HTable: "hello", FTable: ""}},
 	},
 	{
-		// Default space does not apply to attribute names.
+		// Default namespace does not apply to attribute names.
 		xml: `<TableAttrs xmlns:f="http://www.w3schools.com/furniture"><TAttr xmlns="http://www.w3.org/TR/html4/" ` +
 			`table="hello" f:table="world" ` +
 			`/></TableAttrs>`,
@@ -558,7 +558,7 @@ var tableAttrs = []struct {
 		tab: TableAttrs{},
 	},
 	{
-		// Default space does not apply to attribute names.
+		// Default namespace does not apply to attribute names.
 		xml: `<TableAttrs xmlns:h="http://www.w3.org/TR/html4/"><TAttr ` +
 			`h:table="hello" table="world" ` +
 			`/></TableAttrs>`,
@@ -566,7 +566,7 @@ var tableAttrs = []struct {
 		ns:  "http://www.w3schools.com/furniture",
 	},
 	{
-		// Default space does not apply to attribute names.
+		// Default namespace does not apply to attribute names.
 		xml: `<TableAttrs xmlns:f="http://www.w3schools.com/furniture"><TAttr ` +
 			`table="hello" f:table="world" ` +
 			`/></TableAttrs>`,
@@ -1093,7 +1093,7 @@ func TestUnmarshalIntoNil(t *testing.T) {
 	err := Unmarshal([]byte("<T><A>1</A></T>"), nilPointer)
 
 	if err == nil {
-		t.Fatalf("no error in unmarshaling")
+		t.Fatalf("no error in unmarshalling")
 	}
 
 }

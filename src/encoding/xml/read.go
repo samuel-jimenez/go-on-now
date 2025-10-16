@@ -45,8 +45,12 @@ import (
 //
 //   - If the XMLName field has an associated tag of the form
 //     "name" or "namespace-URL name", the XML element must have
-//     the given name (and, optionally, name space) or else Unmarshal
+//     the given name (and, optionally, namespace) or else Unmarshal
 //     returns an error.
+//
+//   - If the XMLName field contains an XML namespace, it may also
+//     optionally specify a namespace prefix in the form of
+//     "namespace-URL prefix:name".
 //
 //   - If the XML element has an attribute whose name matches a
 //     struct field name with an associated tag containing ",attr" or
@@ -255,40 +259,32 @@ func (d *Decoder) unmarshalAttr(val reflect.Value, attr Attr) error {
 		}
 		val = val.Elem()
 	}
-	if val.CanInterface() {
+	if val.CanInterface() && val.Type().Implements(unmarshalerAttrType) {
 		// This is an unmarshaler with a non-pointer receiver,
 		// so it's likely to be incorrect, but we do what we're told.
-		if unmarshaler, ok := reflect.TypeAssert[UnmarshalerAttr](val); ok {
-			return unmarshaler.UnmarshalXMLAttr(attr)
-		}
+		return val.Interface().(UnmarshalerAttr).UnmarshalXMLAttr(attr)
 	}
 	if val.CanAddr() {
 		pv := val.Addr()
-		if pv.CanInterface() {
-			if unmarshaler, ok := reflect.TypeAssert[UnmarshalerAttr](pv); ok {
-				return unmarshaler.UnmarshalXMLAttr(attr)
-			}
+		if pv.CanInterface() && pv.Type().Implements(unmarshalerAttrType) {
+			return pv.Interface().(UnmarshalerAttr).UnmarshalXMLAttr(attr)
 		}
 	}
 
 	// Not an UnmarshalerAttr; try encoding.TextUnmarshaler.
-	if val.CanInterface() {
+	if val.CanInterface() && val.Type().Implements(textUnmarshalerType) {
 		// This is an unmarshaler with a non-pointer receiver,
 		// so it's likely to be incorrect, but we do what we're told.
-		if textUnmarshaler, ok := reflect.TypeAssert[encoding.TextUnmarshaler](val); ok {
-			return textUnmarshaler.UnmarshalText([]byte(attr.Value))
-		}
+		return val.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(attr.Value))
 	}
 	if val.CanAddr() {
 		pv := val.Addr()
-		if pv.CanInterface() {
-			if textUnmarshaler, ok := reflect.TypeAssert[encoding.TextUnmarshaler](pv); ok {
-				return textUnmarshaler.UnmarshalText([]byte(attr.Value))
-			}
+		if pv.CanInterface() && pv.Type().Implements(textUnmarshalerType) {
+			return pv.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(attr.Value))
 		}
 	}
 
-	if val.Kind() == reflect.Slice && val.Type().Elem().Kind() != reflect.Uint8 {
+	if val.Type().Kind() == reflect.Slice && val.Type().Elem().Kind() != reflect.Uint8 {
 		// Slice of element values.
 		// Grow slice.
 		n := val.Len()
@@ -311,7 +307,12 @@ func (d *Decoder) unmarshalAttr(val reflect.Value, attr Attr) error {
 	return copyValue(val, []byte(attr.Value))
 }
 
-var attrType = reflect.TypeFor[Attr]()
+var (
+	attrType            = reflect.TypeOf(Attr{})
+	unmarshalerType     = reflect.TypeOf((*Unmarshaler)(nil)).Elem()
+	unmarshalerAttrType = reflect.TypeOf((*UnmarshalerAttr)(nil)).Elem()
+	textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
+)
 
 const (
 	maxUnmarshalDepth     = 10000
@@ -355,35 +356,27 @@ func (d *Decoder) unmarshal(val reflect.Value, start *StartElement, depth int) e
 		val = val.Elem()
 	}
 
-	if val.CanInterface() {
+	if val.CanInterface() && val.Type().Implements(unmarshalerType) {
 		// This is an unmarshaler with a non-pointer receiver,
 		// so it's likely to be incorrect, but we do what we're told.
-		if unmarshaler, ok := reflect.TypeAssert[Unmarshaler](val); ok {
-			return d.unmarshalInterface(unmarshaler, start)
-		}
+		return d.unmarshalInterface(val.Interface().(Unmarshaler), start)
 	}
 
 	if val.CanAddr() {
 		pv := val.Addr()
-		if pv.CanInterface() {
-			if unmarshaler, ok := reflect.TypeAssert[Unmarshaler](pv); ok {
-				return d.unmarshalInterface(unmarshaler, start)
-			}
+		if pv.CanInterface() && pv.Type().Implements(unmarshalerType) {
+			return d.unmarshalInterface(pv.Interface().(Unmarshaler), start)
 		}
 	}
 
-	if val.CanInterface() {
-		if textUnmarshaler, ok := reflect.TypeAssert[encoding.TextUnmarshaler](val); ok {
-			return d.unmarshalTextInterface(textUnmarshaler)
-		}
+	if val.CanInterface() && val.Type().Implements(textUnmarshalerType) {
+		return d.unmarshalTextInterface(val.Interface().(encoding.TextUnmarshaler))
 	}
 
 	if val.CanAddr() {
 		pv := val.Addr()
-		if pv.CanInterface() {
-			if textUnmarshaler, ok := reflect.TypeAssert[encoding.TextUnmarshaler](pv); ok {
-				return d.unmarshalTextInterface(textUnmarshaler)
-			}
+		if pv.CanInterface() && pv.Type().Implements(textUnmarshalerType) {
+			return d.unmarshalTextInterface(pv.Interface().(encoding.TextUnmarshaler))
 		}
 	}
 
@@ -396,6 +389,7 @@ func (d *Decoder) unmarshal(val reflect.Value, start *StartElement, depth int) e
 		saveXMLIndex int
 		saveXMLData  []byte
 		saveAny      reflect.Value
+		saveGroup    []reflect.Value
 		sv           reflect.Value
 		tinfo        *typeInfo
 		err          error
@@ -455,54 +449,40 @@ func (d *Decoder) unmarshal(val reflect.Value, start *StartElement, depth int) e
 				return UnmarshalError("expected element type <" + finfo.name + "> but have <" + start.Name.Local + ">")
 			}
 			if finfo.xmlns != "" && finfo.xmlns != start.Name.Space {
-				e := "expected element <" + finfo.name + "> in name space " + finfo.xmlns + " but have "
+				e := "expected element <" + finfo.name + "> in namespace " + finfo.xmlns + " but have "
 				if start.Name.Space == "" {
-					e += "no name space"
+					e += "no namespace"
 				} else {
 					e += start.Name.Space
 				}
 				return UnmarshalError(e)
 			}
-			fv := finfo.value(sv, initNilPointers)
-			if _, ok := reflect.TypeAssert[Name](fv); ok {
-				fv.Set(reflect.ValueOf(start.Name))
-			}
-		}
-
-		// Assign attributes.
-		for _, a := range start.Attr {
-			handled := false
-			any := -1
-			for i := range tinfo.fields {
-				finfo := &tinfo.fields[i]
-				switch finfo.flags & fMode {
-				case fAttr:
-					strv := finfo.value(sv, initNilPointers)
-					if a.Name.Local == finfo.name && (finfo.xmlns == "" || finfo.xmlns == a.Name.Space) {
-						if err := d.unmarshalAttr(strv, a); err != nil {
-							return err
-						}
-						handled = true
-					}
-
-				case fAny | fAttr:
-					if any == -1 {
-						any = i
-					}
+			// Anonymous struct with no field or anonymous fields cannot get a value using the reflection
+			// package and must be discarded.
+			noValue := true
+			if sv.Type().Name() == "" && sv.Type().Kind() == reflect.Struct {
+				i := 0
+				for i < sv.Type().NumField() && noValue {
+					noValue = noValue && sv.Type().Field(i).Anonymous
+					i++
 				}
+			} else {
+				noValue = false
 			}
-			if !handled && any >= 0 {
-				finfo := &tinfo.fields[any]
-				strv := finfo.value(sv, initNilPointers)
-				if err := d.unmarshalAttr(strv, a); err != nil {
-					return err
+			if !noValue {
+				fv := finfo.value(sv, initNilPointers)
+				if _, ok := fv.Interface().(Name); ok {
+					fv.Set(reflect.ValueOf(start.Name))
 				}
 			}
 		}
 
 		// Determine whether we need to save character data or comments.
+		attrAny := -1
+
 		for i := range tinfo.fields {
 			finfo := &tinfo.fields[i]
+
 			switch finfo.flags & fMode {
 			case fCDATA, fCharData:
 				if !saveData.IsValid() {
@@ -518,7 +498,10 @@ func (d *Decoder) unmarshal(val reflect.Value, start *StartElement, depth int) e
 				if !saveAny.IsValid() {
 					saveAny = finfo.value(sv, initNilPointers)
 				}
-
+			case fAny | fAttr:
+				if attrAny == -1 {
+					attrAny = i
+				}
 			case fInnerXML:
 				if !saveXML.IsValid() {
 					saveXML = finfo.value(sv, initNilPointers)
@@ -530,7 +513,28 @@ func (d *Decoder) unmarshal(val reflect.Value, start *StartElement, depth int) e
 					}
 				}
 			}
+			if finfo.flags&fGroup != 0 {
+				saveGroup = append(saveGroup, finfo.value(sv, initNilPointers))
+			}
 		}
+
+		// Assign attributes.
+		for _, a := range start.Attr {
+			handled := false
+			handled, err = d.unmarshalAttrGroup(tinfo, sv, a)
+			if err != nil {
+				return err
+			}
+
+			if !handled && attrAny >= 0 {
+				finfo := &tinfo.fields[attrAny]
+				strv := finfo.value(sv, initNilPointers)
+				if err := d.unmarshalAttr(strv, a); err != nil {
+					return err
+				}
+			}
+		}
+
 	}
 
 	// Find end element.
@@ -555,6 +559,19 @@ Loop:
 				if err != nil {
 					return err
 				}
+
+				if !consumed {
+					for _, group := range saveGroup {
+						consumed, err = d.unmarshalGroup(group, &t, depth)
+						if err != nil {
+							return err
+						}
+						if consumed {
+							break
+						}
+					}
+				}
+
 				if !consumed && saveAny.IsValid() {
 					consumed = true
 					if err := d.unmarshal(saveAny, &t, depth+1); err != nil {
@@ -589,24 +606,20 @@ Loop:
 		}
 	}
 
-	if saveData.IsValid() && saveData.CanInterface() {
-		if textUnmarshaler, ok := reflect.TypeAssert[encoding.TextUnmarshaler](saveData); ok {
-			if err := textUnmarshaler.UnmarshalText(data); err != nil {
-				return err
-			}
-			saveData = reflect.Value{}
+	if saveData.IsValid() && saveData.CanInterface() && saveData.Type().Implements(textUnmarshalerType) {
+		if err := saveData.Interface().(encoding.TextUnmarshaler).UnmarshalText(data); err != nil {
+			return err
 		}
+		saveData = reflect.Value{}
 	}
 
 	if saveData.IsValid() && saveData.CanAddr() {
 		pv := saveData.Addr()
-		if pv.CanInterface() {
-			if textUnmarshaler, ok := reflect.TypeAssert[encoding.TextUnmarshaler](pv); ok {
-				if err := textUnmarshaler.UnmarshalText(data); err != nil {
-					return err
-				}
-				saveData = reflect.Value{}
+		if pv.CanInterface() && pv.Type().Implements(textUnmarshalerType) {
+			if err := pv.Interface().(encoding.TextUnmarshaler).UnmarshalText(data); err != nil {
+				return err
 			}
+			saveData = reflect.Value{}
 		}
 	}
 
@@ -701,6 +714,130 @@ func copyValue(dst reflect.Value, src []byte) (err error) {
 	return nil
 }
 
+// unmarshalAttrGroup walks down an XML structure looking for wanted
+// attributes, and calls unmarshal on them.
+func (d *Decoder) unmarshalAttrGroup(tinfo *typeInfo, sv reflect.Value, attr Attr) (handled bool, err error) {
+
+	for i := range tinfo.fields {
+		finfo := &tinfo.fields[i]
+		if finfo.flags&fMode == fAttr {
+			strv := finfo.value(sv, initNilPointers)
+			if attr.Name.Local == finfo.name && (finfo.xmlns == "" || finfo.xmlns == attr.Name.Space) {
+				return true, d.unmarshalAttr(strv, attr)
+			}
+		}
+
+		if finfo.flags&fGroup != 0 {
+			fv := finfo.value(sv, initNilPointers)
+			tinfo, err := getTypeInfo(fv.Type())
+			if err != nil {
+				return true, err
+			}
+
+			// Drill into interfaces and pointers.
+			for fv.Kind() == reflect.Interface || fv.Kind() == reflect.Pointer {
+				if fv.IsNil() {
+					fv.Set(reflect.New(fv.Type().Elem()))
+				}
+				fv = fv.Elem()
+			}
+			kind := fv.Kind()
+			if kind != reflect.Struct {
+				continue
+			}
+			if handled, err = d.unmarshalAttrGroup(tinfo, fv, attr); err != nil {
+				return true, err
+			}
+			if handled {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+
+}
+
+// unmarshalGroup walks down an XML structure looking for wanted
+// group fields, and calls unmarshal on them.
+// The consumed result tells whether XML elements have been consumed
+// from the Decoder until start's matching end element, or if it's
+// still untouched because start is uninteresting for sv's fields.
+func (d *Decoder) unmarshalGroup(sv reflect.Value, start *StartElement, depth int) (consumed bool, err error) {
+
+	// Drill into interfaces and pointers.
+	for sv.Kind() == reflect.Interface || sv.Kind() == reflect.Pointer {
+		if sv.IsNil() {
+			sv.Set(reflect.New(sv.Type().Elem()))
+		}
+		sv = sv.Elem()
+	}
+
+	if sv.Kind() == reflect.Pointer {
+		if sv.IsNil() {
+			sv.Set(reflect.New(sv.Type().Elem()))
+		}
+		sv = sv.Elem()
+	}
+
+	if sv.Kind() == reflect.Slice {
+		typ := sv.Type()
+		if typ.Elem().Kind() == reflect.Uint8 {
+			return false, nil
+		}
+
+		// Slice of element values.
+		// Grow slice.
+		n := sv.Len()
+		sv.Grow(1)
+		sv.SetLen(n + 1)
+
+		// Recur to read element into slice.
+		consumed, err = d.unmarshalGroup(sv.Index(n), start, depth+1)
+		if err != nil || !consumed {
+			sv.SetLen(n)
+		}
+		return consumed, err
+	}
+
+	typ := sv.Type()
+	if typ == nameType {
+		sv.Set(reflect.ValueOf(start.Name))
+
+		return true, nil
+
+	}
+	tinfo, err := getTypeInfo(typ)
+	if err != nil {
+		return false, err
+	}
+
+	for i := range tinfo.fields {
+		finfo := &tinfo.fields[i]
+		if finfo.flags&fGroup != 0 {
+			fv := finfo.value(sv, initNilPointers)
+			if err != nil {
+				return true, err
+			}
+
+			if consumed, err = d.unmarshalGroup(fv, start, depth+1); err != nil {
+				return true, err
+			}
+			if consumed {
+				return true, nil
+			}
+
+		}
+		if finfo.flags&fElement != 0 && (finfo.xmlns == "" || finfo.xmlns == start.Name.Space) && finfo.name == start.Name.Local {
+			// It's a perfect match, unmarshal the field.
+			return true, d.unmarshal(finfo.value(sv, initNilPointers), start, depth+1)
+		}
+
+	}
+	// We have no business with this element.
+	return false, nil
+
+}
+
 // unmarshalPath walks down an XML structure looking for wanted
 // paths, and calls unmarshal on them.
 // The consumed result tells whether XML elements have been consumed
@@ -711,6 +848,7 @@ func (d *Decoder) unmarshalPath(tinfo *typeInfo, sv reflect.Value, parents []str
 Loop:
 	for i := range tinfo.fields {
 		finfo := &tinfo.fields[i]
+
 		if finfo.flags&fElement == 0 || len(finfo.parents) < len(parents) || finfo.xmlns != "" && finfo.xmlns != start.Name.Space {
 			continue
 		}

@@ -361,6 +361,13 @@ func TestDWARFLocationList(t *testing.T) {
 
 func TestFlagW(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
+	if runtime.GOOS == "aix" {
+		t.Skip("internal/xcoff cannot parse file without symbol table")
+	}
+	if !platform.ExecutableHasDWARF(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skipping on %s/%s: no DWARF symbol table in executables", runtime.GOOS, runtime.GOARCH)
+	}
+
 	t.Parallel()
 
 	tmpdir := t.TempDir()
@@ -370,14 +377,26 @@ func TestFlagW(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tests := []struct {
+	type testCase struct {
 		flag      string
 		wantDWARF bool
-	}{
+	}
+	tests := []testCase{
 		{"-w", false},     // -w flag disables DWARF
 		{"-s", false},     // -s implies -w
 		{"-s -w=0", true}, // -w=0 negates the implied -w
 	}
+	if testenv.HasCGO() && runtime.GOOS != "solaris" { // Solaris linker doesn't support the -S flag
+		tests = append(tests,
+			testCase{"-w -linkmode=external", false},
+			testCase{"-s -linkmode=external", false},
+			// Some external linkers don't have a way to preserve DWARF
+			// without emitting the symbol table. Skip this case for now.
+			// I suppose we can post- process, e.g. with objcopy.
+			//testCase{"-s -w=0 -linkmode=external", true},
+		)
+	}
+
 	for _, test := range tests {
 		name := strings.ReplaceAll(test.flag, " ", "_")
 		t.Run(name, func(t *testing.T) {

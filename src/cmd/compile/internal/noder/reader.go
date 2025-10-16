@@ -2434,6 +2434,7 @@ func (r *reader) expr() (res ir.Node) {
 		if r.Bool() {
 			// new(expr) -> tmp := expr; &tmp
 			x := r.expr()
+			x = typecheck.DefaultLit(x, nil) // See TODO in exprConvert case.
 			var init ir.Nodes
 			addr := ir.NewAddrExpr(pos, r.tempCopy(pos, x, &init))
 			addr.SetInit(init)
@@ -2960,6 +2961,7 @@ func (r *reader) multiExpr() []ir.Node {
 		as.Def = true
 		for i := range results {
 			tmp := r.temp(pos, r.typ())
+			tmp.Defn = as
 			as.PtrInit().Append(ir.NewDecl(pos, ir.ODCL, tmp))
 			as.Lhs.Append(tmp)
 
